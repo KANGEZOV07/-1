@@ -1,0 +1,41 @@
+-- Создаем таблицы, если до этого не создали.
+
+CREATE TABLE DEIT.XXXX_LOG (
+    DT DATE,
+    LINK VARCHAR(50),
+    USER_AGENT VARCHAR(200),
+    REGION VARCHAR(30)
+);
+
+
+CREATE TABLE DEIT.XXXX_LOG_REPORT (
+    REGION VARCHAR(30),
+    BROWSER VARCHAR(10)
+);
+
+INSERT INTO DEIT.XXXX_LOG (DT, LINK, USER_AGENT, REGION)
+VALUES 
+('2024-02-15', 'https://example.com', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/110.0.0.0 Safari/537.36', 'Europe'),
+('2024-02-15', 'https://example.com', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Safari/537.36', 'Americas'),
+('2024-02-16', 'https://another.com', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Firefox/112.0', 'Asia'),
+('2024-02-17', 'https://testsite.com', 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 Chrome/111.0.0.0 Mobile Safari/537.36', 'Europe');
+
+-- Извлекаем название браузера из USER_AGENT и определяем самый популярный браузер в каждом регионе
+INSERT INTO DEIT.XXXX_LOG_REPORT (REGION, BROWSER)
+SELECT REGION, BROWSER
+FROM (
+    SELECT 
+        REGION,
+        CASE
+            WHEN USER_AGENT LIKE '%Chrome%' THEN 'Chrome'
+            WHEN USER_AGENT LIKE '%Firefox%' THEN 'Firefox'
+            WHEN USER_AGENT LIKE '%Safari%' AND USER_AGENT NOT LIKE '%Chrome%' THEN 'Safari'
+            WHEN USER_AGENT LIKE '%Edge%' THEN 'Edge'
+            WHEN USER_AGENT LIKE '%Opera%' THEN 'Opera'
+            ELSE 'Other'
+        END AS BROWSER,
+        ROW_NUMBER() OVER (PARTITION BY REGION ORDER BY COUNT(*) DESC) AS RN
+    FROM DEIT.XXXX_LOG
+    GROUP BY REGION, BROWSER
+) AS RankedBrowsers
+WHERE RN = 1;
