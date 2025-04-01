@@ -1,0 +1,134 @@
+import os
+import pandas as pd
+import sqlite3
+import shutil
+import time
+from datetime import datetime, timedelta
+
+DB_NAME = "bank_dwh.db"
+DATA_DIR = "/mnt/data/"
+ARCHIVE_DIR = os.path.join(DATA_DIR, "archive")
+
+FILE_PATTERNS = {
+    "transactions": "transactions_%d%m%Y.txt",
+    "passport_blacklist": "passport_blacklist_%d%m%Y.xlsx",
+    "terminals": "terminals_%d%m%Y.xlsx"
+}
+
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS DWH_FACT_TRANSACTIONS (
+        trans_id TEXT PRIMARY KEY,
+        trans_date DATETIME,
+        card_num TEXT,
+        oper_type TEXT,
+        amt DECIMAL(10,2),
+        oper_result TEXT,
+        terminal TEXT
+    )""")
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS DWH_FACT_PASSPORT_BLACKLIST (
+        passport_num TEXT PRIMARY KEY,
+        entry_dt DATETIME
+    )""")
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS DWH_DIM_TERMINALS (
+        terminal_id TEXT PRIMARY KEY,
+        terminal_type TEXT,
+        terminal_city TEXT,
+        terminal_address TEXT,
+        create_dt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        update_dt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )""")
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS REP_FRAUD (
+        event_dt DATETIME,
+        passport TEXT,
+        fio TEXT,
+        phone TEXT,
+        event_type TEXT,
+        report_dt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )""")
+    
+    conn.commit()
+    conn.close()
+
+def load_transactions(file):
+    df = pd.read_csv(file, delimiter=';')
+    conn = sqlite3.connect(DB_NAME)
+    df.to_sql("DWH_FACT_TRANSACTIONS", conn, if_exists="append", index=False)
+    conn.commit()
+    conn.close()
+
+def load_blacklist(file):
+    df = pd.read_excel(file)
+    conn = sqlite3.connect(DB_NAME)
+    df.to_sql("DWH_FACT_PASSPORT_BLACKLIST", conn, if_exists="append", index=False)
+    conn.commit()
+    conn.close()
+
+def load_terminals(file):
+    df = pd.read_excel(file)
+    conn = sqlite3.connect(DB_NAME)
+    df.to_sql("DWH_DIM_TERMINALS", conn, if_exists="replace", index=False)
+    conn.commit()
+    conn.close()
+
+def detect_fraud():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    report_dt = datetime.now()
+    
+    cursor.execute("""
+    INSERT INTO REP_FRAUD (event_dt, passport, fio, phone, event_type, report_dt)
+    SELECT t.trans_date, c.passport_num, c.first_name || ' ' || c.last_name, c.phone, 'Операция с заблокированным паспортом', ?
+    FROM DWH_FACT_TRANSACTIONS t
+    JOIN cards cr ON t.card_num = cr.card_num
+    JOIN accounts a ON cr.account_num = a.account_num
+    JOIN clients c ON a.client = c.client_id
+    JOIN DWH_FACT_PASSPORT_BLACKLIST pb ON c.passport_num = pb.passport_num
+    """, (report_dt,))
+    
+    conn.commit()
+    conn.close()
+
+def archive_file(file_path):
+    if not os.path.exists(ARCHIVE_DIR):
+        os.makedirs(ARCHIVE_DIR)
+    
+    file_name = os.path.basename(file_path)
+    new_path = os.path.join(ARCHIVE_DIR, file_name + ".backup")
+    shutil.move(file_path, new_path)
+    print(f"Файл {file_name} перемещен в архив.")
+
+def process_files():
+    init_db()
+    
+    today = datetime.today()
+    
+    for key, pattern in FILE_PATTERNS.items():
+        file_name = pattern % (today.day, today.month, today.year)
+        file_path = os.path.join(DATA_DIR, file_name)
+        
+        if os.path.exists(file_path):
+            print(f"Обрабатываем файл: {file_name}")
+            if key == "transactions":
+                load_transactions(file_path)
+            elif key == "passport_blacklist":
+                load_blacklist(file_path)
+            elif key == "terminals":
+                load_terminals(file_path)
+            archive_file(file_path)
+        else:
+            print(f"Файл {file_name} не найден.")
+    
+    detect_fraud()
+
+if __name__ == "__main__":
+    process_files()
