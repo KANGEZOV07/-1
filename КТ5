@@ -1,0 +1,139 @@
+import sqlite3
+import pandas as pd
+import time
+import os
+from datetime import datetime
+
+DB_NAME = "fraud_detection.db"
+CSV_FILES = ["/mnt/data/employees1.csv", "/mnt/data/employees2.csv", "/mnt/data/employees3.csv"]
+
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS target_empl_hist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER,
+        hire_date DATE,
+        salary FLOAT,
+        status TEXT -- 'active' или 'terminated'
+    )""")
+    
+    cursor.execute("""
+    CREATE VIEW IF NOT EXISTS v_empl AS
+    SELECT employee_id, hire_date, salary, status
+    FROM target_empl_hist
+    WHERE status = 'active'""")
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS rep_fraud (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date DATETIME,
+        promotion_prcnt FLOAT,
+        quit_prcnt FLOAT
+    )""")
+    
+    conn.commit()
+    conn.close()
+
+def load_csv_to_temp():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    cursor.execute("DROP TABLE IF EXISTS t_empl")
+    cursor.execute("""
+    CREATE TABLE t_empl (
+        employee_id INTEGER,
+        hire_date DATE,
+        salary FLOAT,
+        status TEXT
+    )""")
+    
+    for file in CSV_FILES:
+        if os.path.exists(file):
+            print(f"Загружаем {file}...")
+            df = pd.read_csv(file)
+            df.to_sql("t_empl", conn, if_exists="append", index=False)
+            time.sleep(5)
+    
+    conn.commit()
+    conn.close()
+
+def update_target_table():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    INSERT INTO target_empl_hist (employee_id, hire_date, salary, status)
+    SELECT employee_id, hire_date, salary, status FROM t_empl
+    WHERE employee_id NOT IN (SELECT employee_id FROM target_empl_hist)
+    """)
+
+    cursor.execute("""
+    UPDATE target_empl_hist
+    SET status = 'terminated'
+    WHERE employee_id IN (SELECT employee_id FROM t_empl WHERE status = 'terminated')
+    """)
+
+    cursor.execute("""
+    UPDATE target_empl_hist
+    SET salary = (SELECT salary FROM t_empl WHERE t_empl.employee_id = target_empl_hist.employee_id)
+    WHERE employee_id IN (SELECT employee_id FROM t_empl)
+    """)
+    
+    conn.commit()
+    conn.close()
+
+def generate_fraud_report():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    SELECT COUNT(DISTINCT employee_id) * 100.0 / (SELECT COUNT(*) FROM v_empl)
+    FROM target_empl_hist
+    WHERE employee_id IN (
+        SELECT employee_id
+        FROM target_empl_hist
+        GROUP BY employee_id
+        HAVING MAX(salary) > 1.1 * MIN(salary)
+    )
+    """)
+    promotion_prcnt = cursor.fetchone()[0] or 0
+    
+    cursor.execute("""
+    SELECT COUNT(*) * 100.0 / (SELECT COUNT(*) FROM target_empl_hist)
+    FROM target_empl_hist WHERE status = 'terminated'
+    """)
+    quit_prcnt = cursor.fetchone()[0] or 0
+    
+    cursor.execute("""
+    INSERT INTO rep_fraud (date, promotion_prcnt, quit_prcnt)
+    VALUES (?, ?, ?)
+    """, (datetime.now(), promotion_prcnt, quit_prcnt))
+    
+    conn.commit()
+    conn.close()
+
+def show_tables():
+    conn = sqlite3.connect(DB_NAME)
+    print("\nТаблица target_empl_hist:")
+    print(pd.read_sql("SELECT * FROM target_empl_hist", conn))
+    print("\nТаблица rep_fraud:")
+    print(pd.read_sql("SELECT * FROM rep_fraud", conn))
+    conn.close()
+
+def cleanup():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DROP TABLE IF EXISTS t_empl")
+    conn.commit()
+    conn.close()
+
+if __name__ == "__main__":
+    init_db()
+    load_csv_to_temp()
+    update_target_table()
+    generate_fraud_report()
+    show_tables()
+    cleanup()
