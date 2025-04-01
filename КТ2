@@ -1,0 +1,38 @@
+SELECT p.name, COALESCE(SUM(f.price), 0) AS total_spent
+FROM passengers p
+LEFT JOIN fly_mapping fm ON p.id = fm.passenger_id
+LEFT JOIN flying f ON fm.flying_id = f.id
+GROUP BY p.name;
+
+SELECT p.age_group, ROUND(AVG(f.flight_time), 2) AS avg_flight_time
+FROM passengers p
+JOIN fly_mapping fm ON p.id = fm.passenger_id
+JOIN flying f ON fm.flying_id = f.id
+GROUP BY p.age_group;
+
+SELECT p.name, COUNT(fm.flying_id) AS flight_count
+FROM passengers p
+JOIN fly_mapping fm ON p.id = fm.passenger_id
+GROUP BY p.name
+HAVING COUNT(fm.flying_id) = (
+    SELECT MAX(flight_count)
+    FROM (SELECT COUNT(flying_id) AS flight_count FROM fly_mapping GROUP BY passenger_id) subquery
+);
+
+SELECT p.name, COUNT(fm.flying_id) AS flight_count
+FROM passengers p
+JOIN fly_mapping fm ON p.id = fm.passenger_id
+GROUP BY p.name
+HAVING COUNT(fm.flying_id) > (
+    SELECT AVG(flight_count)
+    FROM (SELECT COUNT(flying_id) AS flight_count FROM fly_mapping GROUP BY passenger_id) subquery
+);
+
+SELECT f.point_to, COUNT(*) AS arrival_count
+FROM flying f
+JOIN fly_mapping fm ON f.id = fm.flying_id
+GROUP BY f.point_to
+HAVING COUNT(*) = (
+    SELECT MAX(arrival_count)
+    FROM (SELECT COUNT(*) AS arrival_count FROM flying f JOIN fly_mapping fm ON f.id = fm.flying_id GROUP BY f.point_to) subquery
+);
