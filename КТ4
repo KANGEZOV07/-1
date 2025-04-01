@@ -20,7 +20,6 @@ VALUES
 ('2024-02-16', 'https://another.com', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Firefox/112.0', 'Asia'),
 ('2024-02-17', 'https://testsite.com', 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 Chrome/111.0.0.0 Mobile Safari/537.36', 'Europe');
 
--- Извлекаем название браузера из USER_AGENT и определяем самый популярный браузер в каждом регионе
 INSERT INTO DEIT.XXXX_LOG_REPORT (REGION, BROWSER)
 SELECT REGION, BROWSER
 FROM (
